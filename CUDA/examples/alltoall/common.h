@@ -40,9 +40,37 @@
 #define A2A_IMM_STEP_SHIFT 12
 #define A2A_IMM_STEP_BITS  20
 
+/*
+ * The fields must tile all 32 bits with no gap and no overlap, so that widening
+ * one without moving the field above it fails the build instead of silently
+ * corrupting the encoding at runtime.
+ */
+static_assert(A2A_IMM_KIND_SHIFT == 0, "kind must start at bit 0");
+static_assert(A2A_IMM_SRC_SHIFT == A2A_IMM_KIND_SHIFT + A2A_IMM_KIND_BITS,
+	      "src_rank must start where kind ends");
+static_assert(A2A_IMM_STEP_SHIFT == A2A_IMM_SRC_SHIFT + A2A_IMM_SRC_BITS,
+	      "step must start where src_rank ends");
+static_assert(A2A_IMM_STEP_SHIFT + A2A_IMM_STEP_BITS == 32,
+	      "the fields must fill imm_data exactly");
+
 /* Low-`bits` mask. Valid for 1..31; the widest field here is 20. */
 
 #define A2A_MASK(bits) ((uint32_t)((UINT32_C(1) << (bits)) - 1))
+
+/*
+ * What a write is, from the receiver's point of view. Dispatch carries tokens
+ * out to the experts, combine brings results back; each direction announces a
+ * count before it sends the payload it is counting.
+ */
+enum a2a_kind {
+	A2A_KIND_DISPATCH_META = 0,
+	A2A_KIND_DISPATCH_DATA = 1,
+	A2A_KIND_COMBINE_META = 2,
+	A2A_KIND_COMBINE_DATA = 3,
+};
+
+static_assert(A2A_KIND_COMBINE_DATA <= (int)A2A_MASK(A2A_IMM_KIND_BITS),
+	      "every kind must fit the kind field");
 
 /*
  * Each argument is masked to its field width rather than validated. Device code
@@ -53,6 +81,27 @@ A2A_FN uint32_t pack_imm(uint32_t step, uint32_t src_rank, uint32_t kind)
 	return ((step & A2A_MASK(A2A_IMM_STEP_BITS)) << A2A_IMM_STEP_SHIFT) |
 	       ((src_rank & A2A_MASK(A2A_IMM_SRC_BITS)) << A2A_IMM_SRC_SHIFT) |
 	       ((kind & A2A_MASK(A2A_IMM_KIND_BITS)) << A2A_IMM_KIND_SHIFT);
+}
+
+/*
+ * The reverse: shift the field down to bit 0, then mask off everything above
+ * it. Three separate accessors rather than one call returning all three,
+ * because the receiver reads kind first to decide what to do and often needs
+ * nothing else.
+ */
+A2A_FN uint32_t imm_step(uint32_t imm)
+{
+	return (imm >> A2A_IMM_STEP_SHIFT) & A2A_MASK(A2A_IMM_STEP_BITS);
+}
+
+A2A_FN uint32_t imm_src_rank(uint32_t imm)
+{
+	return (imm >> A2A_IMM_SRC_SHIFT) & A2A_MASK(A2A_IMM_SRC_BITS);
+}
+
+A2A_FN uint32_t imm_kind(uint32_t imm)
+{
+	return (imm >> A2A_IMM_KIND_SHIFT) & A2A_MASK(A2A_IMM_KIND_BITS);
 }
 
 #endif 
